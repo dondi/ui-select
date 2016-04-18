@@ -60,6 +60,7 @@ uis.directive('uiSelectChoices',
         $select.onHighlightCallback = attrs.onHighlight;
 
         $select.dropdownPosition = attrs.position ? attrs.position.toLowerCase() : uiSelectConfig.dropdownPosition;        
+
         scope.$on('$destroy', function() {
           choices.remove();
         });
