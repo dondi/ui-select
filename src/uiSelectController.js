@@ -5,8 +5,8 @@
  * put as much logic in the controller (instead of the link functions) as possible so it can be easily tested.
  */
 uis.controller('uiSelectCtrl',
-  ['$scope', '$element', '$timeout', '$filter', 'uisRepeatParser', 'uiSelectMinErr', 'uiSelectConfig', '$parse', '$injector', '$window',
-  function($scope, $element, $timeout, $filter, RepeatParser, uiSelectMinErr, uiSelectConfig, $parse, $injector, $window) {
+  ['$scope', '$element', '$timeout', '$filter', '$$uisDebounce', 'uisRepeatParser', 'uiSelectMinErr', 'uiSelectConfig', '$parse', '$injector', '$window',
+  function($scope, $element, $timeout, $filter, $$uisDebounce, RepeatParser, uiSelectMinErr, uiSelectConfig, $parse, $injector, $window) {
 
   var ctrl = this;
 
@@ -42,6 +42,7 @@ uis.controller('uiSelectCtrl',
   ctrl.lockChoiceExpression = undefined; // Initialized inside uiSelectMatch directive link function
   ctrl.clickTriggeredSelect = false;
   ctrl.$filter = $filter;
+  ctrl.$element = $element;
 
   // Use $injector to check for $animate and store a reference to it
   ctrl.$animate = (function () {
@@ -123,15 +124,29 @@ uis.controller('uiSelectCtrl',
       }
 
       var container = $element.querySelectorAll('.ui-select-choices-content');
-      if (ctrl.$animate && ctrl.$animate.on && ctrl.$animate.enabled(container[0])) {
-        ctrl.$animate.on('enter', container[0], function (elem, phase) {
-          if (phase === 'close') {
+      var searchInput = $element.querySelectorAll('.ui-select-search');
+      if (ctrl.$animate && ctrl.$animate.enabled(container[0])) {
+        var animateHandler = function(elem, phase) {
+          if (phase === 'start' && ctrl.items.length === 0) {
             // Only focus input after the animation has finished
+            ctrl.$animate.off('removeClass', searchInput[0], animateHandler);
+            $timeout(function () {
+              ctrl.focusSearchInput(initSearchValue);
+            });
+          } else if (phase === 'close') {
+            // Only focus input after the animation has finished
+            ctrl.$animate.off('enter', container[0], animateHandler);
             $timeout(function () {
               ctrl.focusSearchInput(initSearchValue);
             });
           }
-        });
+        };
+
+        if (ctrl.items.length > 0) {
+          ctrl.$animate.on('enter', container[0], animateHandler);
+        } else {
+          ctrl.$animate.on('removeClass', searchInput[0], animateHandler);
+        }
       } else {
         $timeout(function () {
           ctrl.focusSearchInput(initSearchValue);
@@ -251,7 +266,11 @@ uis.controller('uiSelectCtrl',
           //Remove already selected items (ex: while searching)
           //TODO Should add a test
           ctrl.refreshItems(items);
-          ctrl.ngModel.$modelValue = null; //Force scope model value and ngModel value to be out of sync to re-run formatters
+
+          //update the view value with fresh data from items, if there is a valid model value
+          if(angular.isDefined(ctrl.ngModel.$modelValue)) {
+            ctrl.ngModel.$modelValue = null; //Force scope model value and ngModel value to be out of sync to re-run formatters
+          }
         }
       }
     });
@@ -435,6 +454,7 @@ uis.controller('uiSelectCtrl',
   };
 
   var sizeWatch = null;
+  var updaterScheduled = false;
   ctrl.sizeSearchInput = function() {
 
     var input = ctrl.searchInput[0],
@@ -456,10 +476,16 @@ uis.controller('uiSelectCtrl',
     ctrl.searchInput.css('width', '10px');
     $timeout(function() { //Give tags time to render correctly
       if (sizeWatch === null && !updateIfVisible(calculateContainerWidth())) {
-        sizeWatch = $scope.$watch(calculateContainerWidth, function(containerWidth) {
-          if (updateIfVisible(containerWidth)) {
-            sizeWatch();
-            sizeWatch = null;
+        sizeWatch = $scope.$watch(angular.noop, function() {
+          if (!updaterScheduled) {
+            updaterScheduled = true;
+            $scope.$$postDigest(function() {
+              updaterScheduled = false;
+              if (updateIfVisible(calculateContainerWidth())) {
+                sizeWatch();
+                sizeWatch = null;
+              }
+            });
           }
         });
       }
@@ -622,12 +648,14 @@ uis.controller('uiSelectCtrl',
     }
   }
 
+  var onResize = $$uisDebounce(function() {
+    ctrl.sizeSearchInput();
+  }, 50);
+
+  angular.element($window).bind('resize', onResize);
+
   $scope.$on('$destroy', function() {
     ctrl.searchInput.off('keyup keydown tagged blur paste');
+    angular.element($window).off('resize', onResize);
   });
-
-  angular.element($window).bind('resize', function() {
-    ctrl.sizeSearchInput();
-  });
-
 }]);
